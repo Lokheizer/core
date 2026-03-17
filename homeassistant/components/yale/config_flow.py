@@ -32,13 +32,15 @@ class YaleConfigFlow(config_entry_oauth2_flow.AbstractOAuth2FlowHandler, domain=
         return await self.async_step_user()
 
     def _async_get_user_id_from_access_token(self, encoded: str) -> str:
-        """Get user ID from access token."""
+        """Get user ID from access token.
+
+        Signature verification is disabled because we only extract claims
+        from an OAuth access token and don't have the provider's signing key.
+        """
         decoded = jwt.decode(
             encoded,
-            "",
-            verify=False,
-            options={"verify_signature": False},
             algorithms=["HS256"],
+            options={"verify_signature": False},
         )
         return decoded["userId"]
 

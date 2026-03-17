@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-import random
+import secrets
 from typing import Any
 
 from automower_ble.mower import Mower
@@ -157,7 +157,7 @@ class HusqvarnaAutomowerBleConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def probe_mower(self, device) -> str | None:
         """Probe the mower to see if it exists."""
-        channel_id = random.randint(1, 0xFFFFFFFF)
+        channel_id = secrets.randbelow(0xFFFFFFFF) + 1
 
         assert self.address
 
@@ -180,7 +180,7 @@ class HusqvarnaAutomowerBleConfigFlow(ConfigFlow, domain=DOMAIN):
         assert self.address
         assert self.pin is not None
 
-        channel_id = random.randint(1, 0xFFFFFFFF)
+        channel_id = secrets.randbelow(0xFFFFFFFF) + 1
         mower = Mower(channel_id, self.address, int(self.pin))
 
         return (channel_id, mower)

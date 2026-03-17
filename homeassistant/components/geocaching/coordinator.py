@@ -35,7 +35,6 @@ class GeocachingDataUpdateCoordinator(DataUpdateCoordinator[GeocachingStatus]):
         async def async_token_refresh() -> str:
             await session.async_ensure_token_valid()
             token = session.token["access_token"]
-            LOGGER.debug(str(token))
             return str(token)
 
         client_session = async_get_clientsession(hass)

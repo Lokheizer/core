@@ -34,13 +34,15 @@ class AugustConfigFlow(
         return await self.async_step_user()
 
     def _async_decode_jwt(self, encoded: str) -> dict[str, Any]:
-        """Decode JWT token."""
+        """Decode JWT token.
+
+        Signature verification is disabled because we only extract claims
+        from an OAuth access token and don't have the provider's signing key.
+        """
         return jwt.decode(
             encoded,
-            "",
-            verify=False,
-            options={"verify_signature": False},
             algorithms=["HS256"],
+            options={"verify_signature": False},
         )
 
     async def _async_handle_reauth(

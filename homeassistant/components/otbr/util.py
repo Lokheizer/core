@@ -6,7 +6,7 @@ from collections.abc import Callable, Coroutine
 import dataclasses
 from functools import wraps
 import logging
-import random
+import secrets
 from typing import TYPE_CHECKING, Any, Concatenate, cast
 
 import aiohttp
@@ -58,7 +58,7 @@ def compose_default_network_name(pan_id: int) -> str:
 def generate_random_pan_id() -> int:
     """Generate a random PAN ID."""
     # PAN ID is 2 bytes, 0xffff is reserved for broadcast
-    return random.randint(0, 0xFFFE)
+    return secrets.randbelow(0xFFFF)
 
 
 def _handle_otbr_error[**_P, _R](
