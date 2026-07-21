@@ -106,12 +106,36 @@ def test_device_entry_as_dict() -> None:
     result = device_entry_as_dict(entry)
 
     assert isinstance(result, dict)
-    # Internal bookkeeping and composite-device migration attributes are excluded
+    # Freeze the exposed field set. The filter uses a denylist, so a new
+    # DeviceEntry attribute is exposed in diagnostics unless explicitly excluded;
+    # this assertion forces that decision to be made deliberately.
+    assert set(result) == {
+        "area_id",
+        "config_entry_id",
+        "config_subentry_id",
+        "configuration_url",
+        "connections",
+        "created_at",
+        "disabled_by",
+        "entry_type",
+        "hw_version",
+        "id",
+        "identifiers",
+        "labels",
+        "manufacturer",
+        "model",
+        "model_id",
+        "modified_at",
+        "name",
+        "name_by_user",
+        "serial_number",
+        "sw_version",
+        "via_device_id",
+    }
+    # No internal attribute leaks: nothing underscore-prefixed and none of the
+    # composite-device migration fields.
+    assert not any(key.startswith("_") for key in result)
     for attribute in (
-        "_cache",
-        "_composite_subentries",
-        "_pending_move",
-        "_suggested_area",
         "composite_device_id",
         "composite_primary_config_entry",
         "has_composite_identifiers",
