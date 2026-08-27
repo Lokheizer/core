@@ -3,6 +3,7 @@
 import pytest
 import voluptuous as vol
 
+from homeassistant.components.energy.const import DOMAIN
 from homeassistant.components.energy.data import (
     ENERGY_SOURCE_SCHEMA,
     FLOW_FROM_GRID_SOURCE_SCHEMA,
@@ -13,7 +14,7 @@ from homeassistant.components.energy.data import (
     EnergyManager,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import storage
+from homeassistant.helpers import entity_registry as er, storage
 
 
 async def test_energy_preferences_no_migration_needed(hass: HomeAssistant) -> None:
@@ -1146,3 +1147,93 @@ async def test_water_allows_price_with_stat_cost_for_external_stat() -> None:
     )
     assert result["stat_cost"] == "external:water_cost"
     assert result["number_energy_price"] == 0.005
+
+
+async def test_power_stat_rate_prefers_registered_entity_id(
+    hass: HomeAssistant, entity_registry: er.EntityRegistry
+) -> None:
+    """Test stat_rate follows the entity ID the registry assigned to the sensor."""
+    entity_registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "energy_power_battery_inverted_sensor_battery_power",
+        suggested_object_id="battery_power_inverted_2",
+    )
+    manager = EnergyManager(hass)
+    await manager.async_initialize()
+    manager.data = manager.default_preferences()
+
+    await manager.async_update(
+        {
+            "energy_sources": [
+                {
+                    "type": "battery",
+                    "stat_energy_from": "sensor.battery_energy_from",
+                    "stat_energy_to": "sensor.battery_energy_to",
+                    "power_config": {"stat_rate_inverted": "sensor.battery_power"},
+                }
+            ],
+        }
+    )
+
+    assert manager.data is not None
+    source = manager.data["energy_sources"][0]
+    assert source["stat_rate"] == "sensor.battery_power_inverted_2"
+
+
+@pytest.mark.parametrize(
+    ("power_config", "expected_sensors"),
+    [
+        pytest.param(
+            {"stat_rate_inverted": "sensor.battery_power"},
+            "sensor.battery_power",
+            id="inverted",
+        ),
+        pytest.param(
+            {
+                "stat_rate_from": "sensor.battery_discharge",
+                "stat_rate_to": "sensor.battery_charge",
+            },
+            "sensor.battery_discharge, sensor.battery_charge",
+            id="two_sensors",
+        ),
+    ],
+)
+async def test_power_config_rejected_on_multiple_sources(
+    power_config: dict[str, str], expected_sensors: str
+) -> None:
+    """Test one power sensor cannot be shared by two sources of the same type."""
+    battery = {
+        "type": "battery",
+        "stat_energy_from": "sensor.battery_energy_from",
+        "stat_energy_to": "sensor.battery_energy_to",
+        "power_config": power_config,
+    }
+    second = {**battery, "stat_energy_from": "sensor.second_battery_energy_from"}
+
+    with pytest.raises(vol.Invalid, match="more than one battery source") as err:
+        ENERGY_SOURCE_SCHEMA([battery, second])
+
+    assert expected_sensors in str(err.value)
+
+
+async def test_power_config_allowed_on_different_source_types() -> None:
+    """Test a battery and a grid source may reference the same power sensor."""
+    sources = ENERGY_SOURCE_SCHEMA(
+        [
+            {
+                "type": "battery",
+                "stat_energy_from": "sensor.battery_energy_from",
+                "stat_energy_to": "sensor.battery_energy_to",
+                "power_config": {"stat_rate_inverted": "sensor.hybrid_power"},
+            },
+            {
+                "type": "grid",
+                "stat_energy_from": "sensor.grid_energy_from",
+                "cost_adjustment_day": 0.0,
+                "power_config": {"stat_rate_inverted": "sensor.hybrid_power"},
+            },
+        ]
+    )
+
+    assert len(sources) == 2

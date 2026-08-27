@@ -3,14 +3,21 @@
 import asyncio
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, NotRequired, TypedDict, override
+from typing import Any, Literal, NotRequired, TypedDict, cast, override
 
 import voluptuous as vol
 
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback, valid_entity_id
-from homeassistant.helpers import config_validation as cv, singleton, storage
+from homeassistant.helpers import (
+    config_validation as cv,
+    entity_registry as er,
+    singleton,
+    storage,
+)
 
 from .const import DOMAIN
+from .helpers import generate_power_sensor_entity_id, generate_power_sensor_unique_id
 
 STORAGE_VERSION = 1
 STORAGE_MINOR_VERSION = 3
@@ -595,6 +602,37 @@ def _validate_grid_stat_uniqueness(value: list[SourceType]) -> list[SourceType]:
     return value
 
 
+def _validate_power_stat_uniqueness(value: list[SourceType]) -> list[SourceType]:
+    """Validate that a transform power sensor is only configured once.
+
+    Sources sharing one power_config would generate a single entity, silently
+    dropping the power reading of all but the first of them.
+    """
+    seen: set[str] = set()
+
+    for source in value:
+        if source["type"] not in ("battery", "grid"):
+            continue
+        # A standard sensor is used as-is and generates no entity of its own
+        if not (config := source.get("power_config")) or "stat_rate" in config:
+            continue
+
+        unique_id = generate_power_sensor_unique_id(source["type"], config)
+        if unique_id in seen:
+            sensors = ", ".join(
+                config[key]
+                for key in ("stat_rate_inverted", "stat_rate_from", "stat_rate_to")
+                if key in config
+            )
+            raise vol.Invalid(
+                f"Cannot use {sensors} as the power sensor of more than one"
+                f" {source['type']} source"
+            )
+        seen.add(unique_id)
+
+    return value
+
+
 ENERGY_SOURCE_SCHEMA = vol.All(
     vol.Schema(
         [
@@ -612,6 +650,7 @@ ENERGY_SOURCE_SCHEMA = vol.All(
     ),
     check_type_limits,
     _validate_grid_stat_uniqueness,
+    _validate_power_stat_uniqueness,
 )
 
 DEVICE_CONSUMPTION_SCHEMA = vol.Schema(
@@ -787,56 +826,72 @@ class EnergyManager:
 
     def _process_energy_sources(self, sources: list[SourceType]) -> list[SourceType]:
         """Process energy sources and set stat_rate for power configs."""
-        from .helpers import generate_power_sensor_entity_id  # noqa: PLC0415
-
         processed: list[SourceType] = []
         for source in sources:
-            if source["type"] == "battery":
-                source = self._process_battery_power(
-                    source, generate_power_sensor_entity_id
-                )
-            elif source["type"] == "grid":
-                source = self._process_grid_power(
-                    source, generate_power_sensor_entity_id
-                )
+            if source["type"] in ("battery", "grid"):
+                source = self._process_power_source(source)
             processed.append(source)
         return processed
 
-    def _process_battery_power(
-        self,
-        source: BatterySourceType,
-        generate_entity_id: Callable[[str, PowerConfig], str],
-    ) -> BatterySourceType:
-        """Set stat_rate for battery if power_config is specified."""
+    def _process_power_source(
+        self, source: BatterySourceType | GridSourceType
+    ) -> BatterySourceType | GridSourceType:
+        """Set stat_rate for a battery or grid source with a power_config."""
         if "power_config" not in source:
             return source
 
         config = source["power_config"]
 
-        # If power_config has stat_rate (standard), just use it directly
-        if "stat_rate" in config:
-            return {**source, "stat_rate": config["stat_rate"]}
+        # A standard sensor is used directly, the other modes get a transform sensor
+        if (stat_rate := config.get("stat_rate")) is None:
+            stat_rate = self._resolve_power_entity_id(source["type"], config)
 
-        # For inverted or two-sensor config, set stat_rate to the generated entity_id
-        return {**source, "stat_rate": generate_entity_id("battery", config)}
+        return cast(
+            "BatterySourceType | GridSourceType", {**source, "stat_rate": stat_rate}
+        )
 
-    def _process_grid_power(
-        self,
-        source: GridSourceType,
-        generate_entity_id: Callable[[str, PowerConfig], str],
-    ) -> GridSourceType:
-        """Set stat_rate for grid if power_config is specified."""
-        if "power_config" not in source:
-            return source
+    def _resolve_power_entity_id(self, source_type: str, config: PowerConfig) -> str:
+        """Return the entity ID of the transform sensor for a power config.
 
-        config = source["power_config"]
+        On the first save the sensor does not exist yet, so the ID it will be created
+        with is the best guess. Once it exists the registry is authoritative: a name
+        collision makes it assign a different ID than the generated one.
+        """
+        unique_id = generate_power_sensor_unique_id(source_type, config)
+        if entity_id := er.async_get(self._hass).async_get_entity_id(
+            Platform.SENSOR, DOMAIN, unique_id
+        ):
+            return entity_id
+        return generate_power_sensor_entity_id(source_type, config)
 
-        # If power_config has stat_rate (standard), just use it directly
-        if "stat_rate" in config:
-            return {**source, "stat_rate": config["stat_rate"]}
+    @callback
+    def async_sync_power_stat_rates(self, entity_ids: dict[str, str]) -> None:
+        """Point stat_rate at the entity IDs that were actually assigned.
 
-        # For inverted or two-sensor config, set stat_rate to the generated entity_id
-        return {**source, "stat_rate": generate_entity_id("grid", config)}
+        Update listeners are deliberately not notified: the sensors already exist,
+        and notifying would re-enter this same processing pass.
+        """
+        if self.data is None:
+            return
+
+        changed = False
+        for source in self.data["energy_sources"]:
+            if source["type"] not in ("battery", "grid"):
+                continue
+            if not (config := source.get("power_config")) or "stat_rate" in config:
+                continue
+
+            unique_id = generate_power_sensor_unique_id(source["type"], config)
+            entity_id = entity_ids.get(unique_id)
+            if entity_id is None or source.get("stat_rate") == entity_id:
+                continue
+
+            source["stat_rate"] = entity_id
+            changed = True
+
+        if changed:
+            data = self.data
+            self._store.async_delay_save(lambda: data, 60)
 
     @callback
     def async_listen_updates(self, update_listener: Callable[[], Awaitable]) -> None:

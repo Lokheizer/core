@@ -164,6 +164,23 @@ class SensorManager:
                 self.async_add_entities(to_add)
                 await asyncio.wait(ent.add_finished for ent in to_add)
 
+            # A rejected entity never reached hass, so it must not stay tracked:
+            # the removal pass below would call async_remove() on it.
+            for key, entity in list(self.current_entities.items()):
+                if entity.add_aborted:
+                    del self.current_entities[key]
+
+            for unique_id, sensor in list(self.current_power_entities.items()):
+                if not sensor.add_aborted:
+                    continue
+                del self.current_power_entities[unique_id]
+                _LOGGER.warning(
+                    "Could not add power sensor %s, the energy dashboard will not show"
+                    " power for this source. Its entity ID may already be in use, or"
+                    " the entity is disabled",
+                    sensor.entity_id,
+                )
+
             for key, entity in to_remove.items():
                 self.current_entities.pop(key)
                 await entity.async_remove()
@@ -171,6 +188,13 @@ class SensorManager:
             for power_key, power_entity in power_to_remove.items():
                 self.current_power_entities.pop(power_key)
                 await power_entity.async_remove()
+
+            self.manager.async_sync_power_stat_rates(
+                {
+                    unique_id: sensor.entity_id
+                    for unique_id, sensor in self.current_power_entities.items()
+                }
+            )
 
         # This guard is for the optional typing of EnergyManager.data.
         # In practice, data is always set to default preferences in async_update
@@ -242,6 +266,9 @@ class SensorManager:
             current_entity.update_config(config)
             return
 
+        if key in self.current_entities:
+            return
+
         self.current_entities[key] = EnergyCostSensor(
             adapter,
             config,
@@ -292,6 +319,9 @@ class SensorManager:
             current_entity.update_config(export_config)
             return
 
+        if key in self.current_entities:
+            return
+
         self.current_entities[key] = EnergyCostSensor(
             GRID_EXPORT_ADAPTER,
             export_config,
@@ -339,6 +369,10 @@ class SensorManager:
         # If entity already exists, keep it
         if unique_id in to_remove:
             to_remove.pop(unique_id)
+            return
+
+        # Sources sharing one power config map onto a single entity
+        if unique_id in self.current_power_entities:
             return
 
         sensor = EnergyPowerSensor(
@@ -402,6 +436,7 @@ class EnergyCostSensor(SensorEntity):
         self.add_finished: asyncio.Future[None] = (
             asyncio.get_running_loop().create_future()
         )
+        self.add_aborted = False
 
     def _reset(self, energy_state: State) -> None:
         """Reset the cost sensor."""
@@ -616,6 +651,7 @@ class EnergyCostSensor(SensorEntity):
     @override
     def add_to_platform_abort(self) -> None:
         """Abort adding an entity to a platform."""
+        self.add_aborted = True
         _set_result_unless_done(self.add_finished)
         super().add_to_platform_abort()
 
@@ -702,6 +738,7 @@ class EnergyPowerSensor(SensorEntity):
         self.add_finished: asyncio.Future[None] = (
             asyncio.get_running_loop().create_future()
         )
+        self.add_aborted = False
 
     @property
     @override
@@ -852,5 +889,6 @@ class EnergyPowerSensor(SensorEntity):
     @override
     def add_to_platform_abort(self) -> None:
         """Abort adding an entity to a platform."""
+        self.add_aborted = True
         _set_result_unless_done(self.add_finished)
         super().add_to_platform_abort()
