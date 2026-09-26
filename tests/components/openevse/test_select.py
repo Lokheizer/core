@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from aiohttp import ContentTypeError, ServerTimeoutError
+from aiohttp import ClientConnectionError, ContentTypeError, ServerTimeoutError
 from openevsehttp.exceptions import (
     AuthenticationError,
     ParseJSONError,
@@ -150,6 +150,13 @@ async def test_select_option(
             id="content_type_error",
         ),
         pytest.param(
+            ClientConnectionError("cannot connect"),
+            HomeAssistantError,
+            "communication_error",
+            None,
+            id="client_connection_error",
+        ),
+        pytest.param(
             UnknownError("unknown error"),
             HomeAssistantError,
             "communication_error",
@@ -229,10 +236,18 @@ async def test_select_unavailable_when_initial_read_fails(
     assert state.state == "unavailable"
 
 
+@pytest.mark.parametrize(
+    "exception",
+    [
+        pytest.param(TimeoutError, id="timeout_error"),
+        pytest.param(ClientConnectionError, id="client_connection_error"),
+    ],
+)
 async def test_select_coordinator_update_failure_marks_unavailable(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_charger: MagicMock,
+    exception: type[Exception],
 ) -> None:
     """Test coordinator update failure marks select entity unavailable."""
     mock_config_entry.add_to_hass(hass)
@@ -243,7 +258,7 @@ async def test_select_coordinator_update_failure_marks_unavailable(
     assert state is not None
     assert state.state == "auto"
 
-    mock_charger.get_override_state.side_effect = TimeoutError
+    mock_charger.get_override_state.side_effect = exception
     coordinator = mock_config_entry.runtime_data
     await coordinator.async_refresh()
     await hass.async_block_till_done()

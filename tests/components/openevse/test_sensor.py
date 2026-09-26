@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from aiohttp import ClientConnectionError
 import pytest
 from syrupy.assertion import SnapshotAssertion
 
@@ -103,12 +104,22 @@ async def test_websocket_callback_updates_entities(
     assert state.state == "sleeping"
 
 
-async def test_sensor_unavailable_on_coordinator_timeout(
+@pytest.mark.parametrize(
+    "exception",
+    [
+        pytest.param(TimeoutError("Connection timed out"), id="timeout_error"),
+        pytest.param(
+            ClientConnectionError("Cannot connect"), id="client_connection_error"
+        ),
+    ],
+)
+async def test_sensor_unavailable_on_coordinator_error(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_charger: MagicMock,
+    exception: Exception,
 ) -> None:
-    """Test sensors become unavailable when coordinator times out."""
+    """Test sensors become unavailable when the coordinator cannot reach the charger."""
     mock_config_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
@@ -117,7 +128,7 @@ async def test_sensor_unavailable_on_coordinator_timeout(
     assert state
     assert state.state != STATE_UNAVAILABLE
 
-    mock_charger.update.side_effect = TimeoutError("Connection timed out")
+    mock_charger.update.side_effect = exception
     await mock_config_entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
 

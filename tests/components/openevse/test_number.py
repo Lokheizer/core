@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from aiohttp import ContentTypeError, ServerTimeoutError
+from aiohttp import ClientConnectionError, ContentTypeError, ServerTimeoutError
 from openevsehttp.exceptions import (
     AuthenticationError,
     ParseJSONError,
@@ -116,6 +116,13 @@ async def test_set_value(
             "communication_error",
             None,
             id="content_type_error",
+        ),
+        pytest.param(
+            ClientConnectionError("cannot connect"),
+            HomeAssistantError,
+            "communication_error",
+            None,
+            id="client_connection_error",
         ),
         pytest.param(
             UnknownError("unknown error"),

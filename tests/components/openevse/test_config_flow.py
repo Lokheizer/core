@@ -3,6 +3,7 @@
 from ipaddress import ip_address
 from unittest.mock import MagicMock
 
+from aiohttp import ClientConnectionError
 from openevsehttp.exceptions import AuthenticationError, MissingSerial
 import pytest
 
@@ -39,15 +40,24 @@ async def test_user_flow(hass: HomeAssistant, mock_charger: MagicMock) -> None:
     assert result["result"].unique_id == "deadbeeffeed"
 
 
+@pytest.mark.parametrize(
+    "exception",
+    [
+        pytest.param(TimeoutError, id="timeout_error"),
+        pytest.param(ClientConnectionError, id="client_connection_error"),
+    ],
+)
 @pytest.mark.usefixtures("mock_setup_entry")
-async def test_user_flow_flaky(hass: HomeAssistant, mock_charger: MagicMock) -> None:
+async def test_user_flow_flaky(
+    hass: HomeAssistant, mock_charger: MagicMock, exception: type[Exception]
+) -> None:
     """Test user flow create entry with flaky charger."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    mock_charger.test_and_get.side_effect = TimeoutError
+    mock_charger.test_and_get.side_effect = exception
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_HOST: "10.0.0.131"}
     )
@@ -505,6 +515,7 @@ async def test_reauth_flow(
     [
         (AuthenticationError, "invalid_auth"),
         (TimeoutError, "cannot_connect"),
+        (ClientConnectionError, "cannot_connect"),
     ],
 )
 @pytest.mark.usefixtures("mock_setup_entry")
@@ -672,6 +683,7 @@ async def test_reconfigure_flow_duplicate_host(
     [
         (AuthenticationError, "invalid_auth"),
         (TimeoutError, "cannot_connect"),
+        (ClientConnectionError, "cannot_connect"),
     ],
 )
 @pytest.mark.usefixtures("mock_setup_entry")

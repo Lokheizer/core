@@ -4,6 +4,7 @@ from datetime import timedelta
 import logging
 from typing import override
 
+from aiohttp import ClientError
 from openevsehttp.__main__ import OpenEVSE
 from openevsehttp.exceptions import AuthenticationError
 
@@ -63,7 +64,7 @@ class OpenEVSEDataUpdateCoordinator(DataUpdateCoordinator[None]):
         """Fetch data from OpenEVSE charger."""
         try:
             await self.charger.update()
-        except TimeoutError as error:
+        except (TimeoutError, ClientError) as error:
             raise UpdateFailed(
                 translation_domain=DOMAIN,
                 translation_key="communication_error",

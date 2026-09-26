@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from typing import Any, override
 
+from aiohttp import ClientError
 from openevsehttp.__main__ import OpenEVSE
 from openevsehttp.exceptions import AuthenticationError, MissingSerial
 import probatio
@@ -77,7 +78,7 @@ class OpenEVSEConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         try:
             result = await charger.test_and_get()
-        except TimeoutError:
+        except TimeoutError, ClientError:
             return {"base": "cannot_connect"}, None
         except AuthenticationError:
             return {"base": "invalid_auth"}, None

@@ -1,5 +1,6 @@
 """The OpenEVSE integration."""
 
+from aiohttp import ClientError
 from openevsehttp.__main__ import OpenEVSE
 from openevsehttp.exceptions import AuthenticationError, MissingSerial
 
@@ -32,7 +33,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: OpenEVSEConfigEntry) -> 
 
     try:
         await charger.test_and_get()
-    except TimeoutError as ex:
+    except (TimeoutError, ClientError) as ex:
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
             translation_key="communication_error",

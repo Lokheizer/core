@@ -2,7 +2,9 @@
 
 from unittest.mock import MagicMock
 
+from aiohttp import ClientConnectionError
 from openevsehttp.exceptions import AuthenticationError, MissingSerial
+import pytest
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.core import HomeAssistant
@@ -10,13 +12,21 @@ from homeassistant.core import HomeAssistant
 from tests.common import MockConfigEntry
 
 
-async def test_setup_entry_timeout(
+@pytest.mark.parametrize(
+    "exception",
+    [
+        pytest.param(TimeoutError, id="timeout_error"),
+        pytest.param(ClientConnectionError, id="client_connection_error"),
+    ],
+)
+async def test_setup_entry_cannot_connect(
     hass: HomeAssistant,
     mock_config_entry: MockConfigEntry,
     mock_charger: MagicMock,
+    exception: type[Exception],
 ) -> None:
-    """Test setup entry raises ConfigEntryNotReady on timeout."""
-    mock_charger.test_and_get.side_effect = TimeoutError
+    """Test setup entry raises ConfigEntryNotReady when the charger is unreachable."""
+    mock_charger.test_and_get.side_effect = exception
 
     mock_config_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_config_entry.entry_id)

@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from aiohttp import ContentTypeError, ServerTimeoutError
+from aiohttp import ClientError
 from openevsehttp.exceptions import (
     AuthenticationError,
     ParseJSONError,
@@ -44,8 +44,7 @@ def openevse_exception_handler(value: Any = None) -> Iterator[None]:
         ) from err
     except (
         TimeoutError,
-        ServerTimeoutError,
-        ContentTypeError,
+        ClientError,
         ParseJSONError,
         UnknownError,
         RuntimeError,
